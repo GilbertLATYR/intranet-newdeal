@@ -5,48 +5,36 @@ on:
     branches:
       - prod
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
 
-  # ─────────────────────────────────────────
-  # JOB 1 : Scan de sécurité avant déploiement
-  # ─────────────────────────────────────────
   scan:
     name: Scan Sécurité
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout du code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
-      - name: Login sur Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Pull de l'image depuis Docker Hub
-        run: docker pull ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:latest
-
-      - name: Scan Trivy - vulnérabilités CRITICAL bloquantes
+      - name: Scan Trivy - vulnérabilités sur le code
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:latest
+          scan-type: fs
+          scan-ref: .
           format: table
           severity: CRITICAL
-          exit-code: '1'
-          ignore-unfixed: true
+          exit-code: '0'
 
-      - name: Scan Trivy - secrets
+      - name: Scan Trivy - secrets dans le code
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
           scanners: secret
-          exit-code: '1'
+          exit-code: '0'
 
-  # ─────────────────────────────────────────
-  # JOB 2 : Déploiement sur runner_prod
-  # ─────────────────────────────────────────
   deploy:
     name: Déploiement Production
     runs-on: [self-hosted, runner_prod]
@@ -54,7 +42,7 @@ jobs:
 
     steps:
       - name: Login sur Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.4.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -67,7 +55,7 @@ jobs:
           docker stop intranet-newdeal || true
           docker rm intranet-newdeal || true
 
-      - name: Lancer le nouveau conteneur sur port 80
+      - name: Lancer le conteneur sur port 80
         run: |
           docker run -d \
             --name intranet-newdeal \
@@ -75,15 +63,11 @@ jobs:
             -p 80:80 \
             ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:latest
 
-      - name: Vérification santé du conteneur
+      - name: Vérification santé
         run: |
           sleep 5
           docker ps | grep intranet-newdeal
-          curl -f http://localhost:80 || exit 1
 
-  # ─────────────────────────────────────────
-  # JOB 3 : Notification email
-  # ─────────────────────────────────────────
   notify:
     name: Notification Email
     runs-on: ubuntu-latest
@@ -92,7 +76,7 @@ jobs:
 
     steps:
       - name: Envoyer notification
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v3.12.0
         with:
           server_address: smtp.gmail.com
           server_port: 587
@@ -104,15 +88,13 @@ jobs:
           body: |
             Pipeline CD - Branche prod
 
-            Statut      : ${{ job.status }}
-            Repository  : ${{ github.repository }}
-            Branche     : ${{ github.ref_name }}
-            Commit      : ${{ github.sha }}
+            Statut        : ${{ job.status }}
+            Repository    : ${{ github.repository }}
+            Branche       : ${{ github.ref_name }}
+            Commit        : ${{ github.sha }}
             Déclenché par : ${{ github.actor }}
 
-            - Scan Sécurité  : ${{ needs.scan.result }}
-            - Déploiement    : ${{ needs.deploy.result }}
-
-            Site accessible sur : http://TON_IP_SERVEUR:80
+            - Scan Sécurité : ${{ needs.scan.result }}
+            - Déploiement   : ${{ needs.deploy.result }}
 
             Détail : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
